@@ -1,0 +1,44 @@
+name: Build & Deploy Frontend
+
+# Trigger this workflow on pushes to the 'main' branch
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "pets-front/**" # only run if frontend files change
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - uses: actions/checkout@v3
+
+      # 2. Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "23"
+
+      # 3. Install frontend dependencies
+      - name: Install frontend dependencies
+        working-directory: pets-front
+        run: npm ci
+
+      # 4. Build React frontend
+      - name: Build frontend
+        working-directory: pets-front        
+        run: npm run build
+
+      # 5. Deploy build to staging server folder
+      - name: Deploy to staging
+        uses: burnett01/rsync-deployments@v8
+        with:
+          switches: -avz --delete
+          path: pets-front/dist/
+          remote_host: ${{ secrets.SERVER_HOST }}
+          remote_user: ${{ secrets.SERVER_USER }}
+          remote_path: ${{ secrets.REMOTE_DIR_FRONTEND }}
+          remote_key: ${{ secrets.SSH_PRIVATE_KEY }}

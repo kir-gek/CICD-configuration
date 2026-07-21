@@ -1,0 +1,80 @@
+name: Frontend Beta Deploy
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - develop
+
+  delete:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22
+  FRONT_DIR: pets-front
+
+jobs:
+
+  deploy:
+    if: github.event_name == 'push' #запуск при пуше
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm #закэширует зависимости и ускорит сборку
+          cache-dependency-path: pets-front/package-lock.json 
+
+      - name: Install
+        working-directory: pets-front
+        run: npm ci
+
+      - name: Build
+        working-directory: pets-front
+        run: npm run build
+
+      # Для совместимости с Docker и URL - замена символов
+      - name: Prepare branch name
+        run: |
+          BRANCH=$(echo "${GITHUB_REF_NAME}" | tr '/' '-' | tr '_' '-')
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+        
+        #Запуск скрипта на создание     
+      - name: Create nginx/site
+        run: |
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "/opt/pets/scripts/beta-env.sh create ${BRANCH}"
+
+      - name: Upload frontend
+        run: |
+          rsync -az --delete \
+            pets-front/dist/ \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/var/www/features/${BRANCH}/
+
+  cleanup:
+    if: github.event_name == 'delete'
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Prepare branch
+        run: |
+          BRANCH=$(echo "${{ github.event.ref }}" | tr '/' '-' | tr '_' '-')
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
+      # - name: Configure SSH
+      #   run: |
+      #     mkdir -p ~/.ssh
+      #     echo "${{ secrets.BETA_SSH_KEY }}" > ~/.ssh/id_ed25519
+      #     chmod 600 ~/.ssh/id_ed25519
+      #     ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Delete beta
+        run: |
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "/opt/pets/scripts/beta-env.sh delete ${BRANCH}"

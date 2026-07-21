@@ -5,7 +5,9 @@ set -e
 ACTION="$1"
 BRANCH="$2"
 
-DOMAIN="${BRANCH}.beta.pets-example.ru"
+# DOMAIN="${BRANCH}.beta.pets-example.ru"
+SERVER_IP="138.16.226.144"
+DOMAIN="${BRANCH}.${SERVER_IP}.sslip.io" 
 
 WWW_ROOT="/var/www/features/${BRANCH}"
 

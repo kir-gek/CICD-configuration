@@ -7,6 +7,9 @@ on:
       - develop
 
   delete:
+  pull_request:
+    types:
+      - closed
 
 permissions:
   contents: read
@@ -64,14 +67,22 @@ jobs:
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/var/www/features/${BRANCH}/
 
   cleanup:
-    if: github.event_name == 'delete'
+    if: |
+      github.event_name == 'delete' ||
+      github.event_name == 'pull_request' && github.event.pull_request.merged == true   
     runs-on: ubuntu-latest
 
     steps:
 
       - name: Prepare branch
         run: |
-          BRANCH=$(echo "${{ github.event.ref }}" | tr '/' '-' | tr '_' '-')
+          if [ "${{ github.event_name }}" = "delete" ]; then
+            BRANCH="${{ github.event.ref }}"
+          else
+            BRANCH="${{ github.event.pull_request.head.ref }}"
+          fi
+          
+          BRANCH=$(echo "$BRANCH" | tr '/' '-' | tr '_' '-')
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
 
       - name: Configure SSH

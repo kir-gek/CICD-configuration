@@ -44,6 +44,13 @@ jobs:
           BRANCH=$(echo "${GITHUB_REF_NAME}" | tr '/' '-' | tr '_' '-')
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
         
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
         #Запуск скрипта на создание     
       - name: Create nginx/site
         run: |
@@ -67,12 +74,12 @@ jobs:
           BRANCH=$(echo "${{ github.event.ref }}" | tr '/' '-' | tr '_' '-')
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
 
-      # - name: Configure SSH
-      #   run: |
-      #     mkdir -p ~/.ssh
-      #     echo "${{ secrets.BETA_SSH_KEY }}" > ~/.ssh/id_ed25519
-      #     chmod 600 ~/.ssh/id_ed25519
-      #     ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
       - name: Delete beta
         run: |

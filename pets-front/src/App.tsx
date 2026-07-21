@@ -16,7 +16,7 @@ const [message, setMessage] = useState('Загрузка...');
   }, []);
   return (
     <>
-     <h1>Test version3</h1>
+     <h1>Test version3...</h1>
      <p>Get запрос на сервер:</p>
      <br></br>
      <p>{message}</p>

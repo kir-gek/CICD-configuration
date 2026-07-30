@@ -1,4 +1,4 @@
-import { Dogs } from './Dogs';
+import { Dogs } from "./components/dogs/Dogs";
 
 function App() {
   return (

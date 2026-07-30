@@ -1,16 +1,36 @@
-const express = require('express');
+require("dotenv").config();
+const express = require("express");
+const sequelize = require("./db");
+const model = require("./models/models");
+const cors = require(`cors`);
+const router = require("./routes/index");
+const path = require('path')
+
+const PORT = process.env.PORT || 5000;
 const app = express();
-const PORT = 3000;
 
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    next();
-});
+app.use(express.json());
 
-app.get('/api/ping', (req, res) => {
-    res.json({ message: 'Бэкенд успешно работает!', status: 'OK' });
-});
+const corsOptions = {
+  origin: "*",
+  credentials: true, //access-control-allow-credentials:true
+  optionSuccessStatus: 200,
+};
 
-app.listen(PORT, () => {
-    console.log(`Сервер запущен на http://localhost:${PORT}`);
-});
+app.use(cors(corsOptions));
+app.use(express.static(path.resolve(__dirname, 'static')))
+
+app.use("/api", router);
+
+
+const start = async () => {
+  try {
+    await sequelize.authenticate(); //здесь идет подключение к базе данных
+    await sequelize.sync(); // сверяет состояние БД с схемой БД
+    app.listen(PORT, () => console.log(`rabotaet ${PORT}`));
+  } catch (e) {
+    console.log(e);
+  }
+};
+
+start();

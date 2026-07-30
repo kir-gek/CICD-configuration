@@ -5,6 +5,6 @@ const DogController = require("../controllers/dogsController")
 router.post("/", DogController.postBreed);
 router.get("/", DogController.getBreed);
 router.put("/", DogController.updateBreed);
-router.delete("/", DogController.deleteBreed)
+router.delete("/:id", DogController.deleteBreed)
 
 module.exports = router;

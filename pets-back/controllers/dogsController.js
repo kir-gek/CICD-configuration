@@ -4,7 +4,7 @@ const ApiError = require("../error/ApiError");
 class DogController {
   async getBreed(req, res, next) {
     try {
-      const breedAll = await CategoryDefect.findAll({
+      const breedAll = await DogBreed.findAll({
         order: [ ["id", "ASC"]],
       });
       return res.json(breedAll);

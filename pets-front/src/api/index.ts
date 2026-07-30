@@ -1,26 +1,24 @@
 import axios from 'axios';
 
-// Создаем экземпляр Axios
+// Описываем интерфейс прямо здесь, чтобы экспортировать его вместе с запросом
+export interface Dog {
+    id: number;
+    title: string;
+    description: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
 const $host = axios.create({
-  // withCredentials: true,
-  baseURL: import.meta.env.VITE_API_URL,
+    // Исправлено: добавлен http:// для дефолтного url, если переменная окружения пуста
+    baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:5000',
 });
 
-const $authHost = axios.create({
-  // withCredentials: true,
-  baseURL: import.meta.env.VITE_API_URL,
+// Функция запроса собак
+export const fetchDogs = async (): Promise<Dog[]> => {
+    // Делаем запрос к /api/dogs (базовый URL подставится автоматически)
+    const response = await $host.get<Dog[]>('/api/dogs');
+    return response.data;
+};
 
-});
-
-// добавляем токен в локальное хранилище]
-const authInterceptor = (config: any) => {
-  config.headers.authorization = `Bearer ${localStorage.getItem('token')}`
-  return config
-}
-
-$authHost.interceptors.request.use(authInterceptor)   //будет отрабатывать при каждом запросе и подсталять токен в хедер авторизейшн
-
-export {
-  $host,
-  $authHost
-}
+export { $host };

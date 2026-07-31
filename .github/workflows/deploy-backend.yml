@@ -1,0 +1,91 @@
+name: Build & Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "pets-back/**"
+      - "compose.prod.yaml"
+      - ".github/workflows/deploy-back.yml"
+
+concurrency:
+  group: deploy-backend-main
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/${{ github.event.repository.name }}-backend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Convert image name to lowercase
+        id: image
+        shell: bash
+        run: |
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+          echo "name=${IMAGE,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./pets-back
+          file: ./pets-back/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+
+      - name: Copy production Compose file
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "compose.prod.yaml"
+          target: "/opt/pets"
+
+      - name: Deploy backend
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+
+            cd /opt/pets
+
+            docker compose \
+              --env-file .env \
+              -f compose.prod.yaml \
+              pull backend
+
+            docker compose \
+              --env-file .env \
+              -f compose.prod.yaml \
+              up -d --remove-orphans
+
+            docker compose \
+              --env-file .env \
+              -f compose.prod.yaml \
+              ps
+
+            docker image prune -f

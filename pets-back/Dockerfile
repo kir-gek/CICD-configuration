@@ -1,4 +1,4 @@
-FROM node:23-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
@@ -8,6 +8,8 @@ RUN npm ci --omit=dev
 
 COPY . .
 
+RUN chmod +x docker-entrypoint.sh
+
 EXPOSE 5000
 
-CMD ["npm", "start"]
+CMD ["./docker-entrypoint.sh"]

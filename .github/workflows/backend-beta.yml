@@ -1,0 +1,216 @@
+name: Backend Beta Deploy
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - develop
+    paths:
+      - "pets-back/**"
+      - "compose.beta.yaml"
+      - "scripts/beta-env.sh"
+      - ".github/workflows/backend-beta.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: beta-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  SERVER_IP: 138.16.226.144
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Забираем код именно текущей feature-ветки.
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # 2. Превращаем имя ветки в безопасный slug.
+      #
+      # feature/Dog_Card
+      # ↓
+      # feature-dog-card
+      - name: Prepare beta variables
+        id: beta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          BRANCH="$(
+            printf '%s' "${GITHUB_REF_NAME}" |
+            tr '[:upper:]' '[:lower:]' |
+            sed -E \
+              's#[/_]+#-#g;
+               s#[^a-z0-9-]+#-#g;
+               s#-+#-#g;
+               s#^-+##;
+               s#-+$##'
+          )"
+
+          if [ -z "${BRANCH}" ]; then
+            echo "Cannot create slug from branch: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+          if [ "${#BRANCH}" -gt 63 ]; then
+            echo "Beta branch slug is longer than 63 characters: ${BRANCH}" >&2
+            exit 1
+          fi
+
+          IMAGE_REPOSITORY="$(
+            printf '%s' \
+              "${REGISTRY}/${GITHUB_REPOSITORY_OWNER}/${GITHUB_REPOSITORY##*/}-backend" |
+            tr '[:upper:]' '[:lower:]'
+          )"
+
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+
+          IMAGE="${IMAGE_REPOSITORY}:beta-${BRANCH}"
+          SHA_IMAGE="${IMAGE_REPOSITORY}:beta-${BRANCH}-${SHORT_SHA}"
+          BETA_URL="http://${BRANCH}.${SERVER_IP}.sslip.io"
+
+          echo "branch=${BRANCH}" >> "${GITHUB_OUTPUT}"
+          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "sha_image=${SHA_IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "url=${BETA_URL}" >> "${GITHUB_OUTPUT}"
+
+          echo "Branch slug: ${BRANCH}"
+          echo "Docker image: ${IMAGE}"
+          echo "Beta URL: ${BETA_URL}"
+
+      # 3. Включаем Docker Buildx.
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # 4. Авторизация GitHub Actions в GHCR.
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 5. Собираем backend именно из текущей ветки.
+      #
+      # Создаём два тега:
+      # beta-feature-dogs          — актуальная версия ветки
+      # beta-feature-dogs-a1b2...  — конкретный commit
+      - name: Build and push beta backend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./pets-back
+          file: ./pets-back/Dockerfile
+          push: true
+
+          tags: |
+            ${{ steps.beta.outputs.image }}
+            ${{ steps.beta.outputs.sha_image }}
+
+          cache-from: |
+            type=gha,scope=backend-beta-${{ steps.beta.outputs.branch }}
+
+          cache-to: |
+            type=gha,mode=max,scope=backend-beta-${{ steps.beta.outputs.branch }}
+
+      # 6. Настраиваем SSH.
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p ~/.ssh
+
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" \
+            > ~/.ssh/id_ed25519
+
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" \
+            >> ~/.ssh/known_hosts
+
+      # 7. Обновляем на сервере Compose-файл и beta-env.sh.
+      #
+      # Так сервер всегда использует версии файлов
+      # из той же ветки и того же commit.
+      - name: Upload beta deployment files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          SSH_TARGET="${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+
+          ssh "${SSH_TARGET}" \
+            "mkdir -p /opt/pets/scripts"
+
+          scp \
+            compose.beta.yaml \
+            "${SSH_TARGET}:/opt/pets/compose.beta.yaml"
+
+          scp \
+            scripts/beta-env.sh \
+            "${SSH_TARGET}:/opt/pets/scripts/beta-env.sh"
+
+          ssh "${SSH_TARGET}" \
+            "chmod +x /opt/pets/scripts/beta-env.sh"
+
+      # 8. Поднимаем или обновляем окружение этой ветки.
+      - name: Deploy beta backend
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          SSH_TARGET="${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+
+          ssh "${SSH_TARGET}" \
+            "/opt/pets/scripts/beta-env.sh \
+              deploy-backend \
+              '${{ steps.beta.outputs.branch }}' \
+              '${{ steps.beta.outputs.image }}'"
+
+      # 9. Проверяем API уже снаружи — через Nginx.
+      - name: Verify beta API
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          API_URL="${{ steps.beta.outputs.url }}/api/dogs"
+
+          echo "Checking ${API_URL}"
+
+          curl \
+            --fail \
+            --show-error \
+            --silent \
+            --retry 10 \
+            --retry-delay 3 \
+            --retry-connrefused \
+            "${API_URL}"
+
+          echo
+
+      # 10. Выводим кликабельную ссылку в GitHub Actions.
+      - name: Add deployment summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## 🐶 Backend beta"
+            echo
+            echo "| Параметр | Значение |"
+            echo "|---|---|"
+            echo "| Ветка | \`${GITHUB_REF_NAME}\` |"
+            echo "| Slug | \`${{ steps.beta.outputs.branch }}\` |"
+            echo "| Image | \`${{ steps.beta.outputs.image }}\` |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo
+            echo "### 🌐 [Открыть beta-окружение](${{ steps.beta.outputs.url }})"
+            echo
+            echo "### 🔌 [Проверить API](${{ steps.beta.outputs.url }}/api/dogs)"
+          } >> "${GITHUB_STEP_SUMMARY}"

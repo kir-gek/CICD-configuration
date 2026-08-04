@@ -25,11 +25,14 @@ app.use("/api", router);
 
 const start = async () => {
   try {
-    await sequelize.authenticate(); //здесь идет подключение к базе данных
-    await sequelize.sync(); // сверяет состояние БД с схемой БД
-    app.listen(PORT, () => console.log(`rabotaet ${PORT}`));
-  } catch (e) {
-    console.log(e);
+    await sequelize.authenticate();
+
+    app.listen(PORT, () => {
+      console.log(`Backend is running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Backend startup failed:", error);
+    process.exit(1);
   }
 };
 

@@ -5,94 +5,355 @@ on:
     branches-ignore:
       - main
       - develop
+    paths:
+      - "pets-front/**"
+      - ".github/workflows/frontend-beta.yml"
 
   delete:
+
   pull_request:
     types:
       - closed
 
 permissions:
   contents: read
+  packages: write
 
 env:
-  NODE_VERSION: 23
+  NODE_VERSION: "23"
   FRONT_DIR: pets-front
+  REGISTRY: ghcr.io
+  SERVER_IP: 138.16.226.144
 
 jobs:
-
   deploy:
-    if: github.event_name == 'push' #запуск при пуше
+    if: github.event_name == 'push'
+
     runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v3
+    # Такая же группа используется в backend-beta.yml.
+    # Frontend и backend одной ветки не будут одновременно
+    # изменять одно beta-окружение.
+    concurrency:
+      group: beta-${{ github.ref_name }}
+      cancel-in-progress: false
 
-      - uses: actions/setup-node@v3
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # feature/Dog_Card -> feature-dog-card
+      - name: Prepare beta variables
+        id: beta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          BRANCH="$(
+            printf '%s' "${GITHUB_REF_NAME}" |
+            tr '[:upper:]' '[:lower:]' |
+            sed -E \
+              's#[/_]+#-#g;
+               s#[^a-z0-9-]+#-#g;
+               s#-+#-#g;
+               s#^-+##;
+               s#-+$##'
+          )"
+
+          if [ -z "${BRANCH}" ]; then
+            echo "Cannot create slug from branch: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+          if [ "${#BRANCH}" -gt 63 ]; then
+            echo "Branch slug is longer than 63 characters: ${BRANCH}" >&2
+            exit 1
+          fi
+
+          REPOSITORY_NAME="${GITHUB_REPOSITORY#*/}"
+
+          IMAGE_REPOSITORY="$(
+            printf '%s' \
+              "${REGISTRY}/${GITHUB_REPOSITORY_OWNER}/${REPOSITORY_NAME}-backend" |
+            tr '[:upper:]' '[:lower:]'
+          )"
+
+          SHORT_SHA="${GITHUB_SHA:0:12}"
+
+          IMAGE="${IMAGE_REPOSITORY}:beta-${BRANCH}"
+          SHA_IMAGE="${IMAGE_REPOSITORY}:beta-${BRANCH}-${SHORT_SHA}"
+          BETA_URL="http://${BRANCH}.${SERVER_IP}.sslip.io"
+
+          echo "branch=${BRANCH}" >> "${GITHUB_OUTPUT}"
+          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "sha_image=${SHA_IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "url=${BETA_URL}" >> "${GITHUB_OUTPUT}"
+
+          echo "Branch slug: ${BRANCH}"
+          echo "Backend image: ${IMAGE}"
+          echo "Beta URL: ${BETA_URL}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm #закэширует зависимости и ускорит сборку
-          cache-dependency-path: pets-front/package-lock.json 
+          cache: npm
+          cache-dependency-path: pets-front/package-lock.json
 
-      - name: Install
-        working-directory: pets-front
+      - name: Install frontend dependencies
+        working-directory: ${{ env.FRONT_DIR }}
         run: npm ci
 
-      - name: Build
-        working-directory: pets-front
+      - name: Build frontend
+        working-directory: ${{ env.FRONT_DIR }}
+        env:
+          # Frontend будет обращаться к API текущей beta:
+          # http://branch.sslip.io/api
+          VITE_API_URL: /api
         run: npm run build
 
-      # Для совместимости с Docker и URL - замена символов
-      - name: Prepare branch name
-        run: |
-          BRANCH=$(echo "${GITHUB_REF_NAME}" | tr '/' '-' | tr '_' '-')
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-        
       - name: Configure SSH
+        shell: bash
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          set -Eeuo pipefail
 
-        #Запуск скрипта на создание     
-      - name: Create nginx/site
+          mkdir -p ~/.ssh
+
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" \
+            > ~/.ssh/id_ed25519
+
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" \
+            >> ~/.ssh/known_hosts
+
+      # Backend может уже существовать, если первым
+      # отработал backend-beta.yml.
+      - name: Check beta backend
+        id: backend
+        shell: bash
         run: |
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "/opt/pets/scripts/beta-env.sh create ${BRANCH}"
+          set -Eeuo pipefail
+
+          SSH_TARGET="${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+
+          if ssh "${SSH_TARGET}" \
+            "/opt/pets/scripts/beta-env.sh \
+              exists \
+              '${{ steps.beta.outputs.branch }}'"
+          then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "Backend already exists"
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+            echo "Backend does not exist and will be created"
+          fi
+
+      # Следующие Docker-шаги выполняются только при первом
+      # frontend-only push, когда backend ещё не создан.
+      - name: Setup Docker Buildx
+        if: steps.backend.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        if: steps.backend.outputs.exists != 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push initial beta backend
+        if: steps.backend.outputs.exists != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./pets-back
+          file: ./pets-back/Dockerfile
+          push: true
+
+          tags: |
+            ${{ steps.beta.outputs.image }}
+            ${{ steps.beta.outputs.sha_image }}
+
+          cache-from: |
+            type=gha,scope=backend-beta-${{ steps.beta.outputs.branch }}
+
+          cache-to: |
+            type=gha,mode=max,scope=backend-beta-${{ steps.beta.outputs.branch }}
+
+      - name: Deploy initial beta backend
+        if: steps.backend.outputs.exists != 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          SSH_TARGET="${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+
+          ssh "${SSH_TARGET}" \
+            "/opt/pets/scripts/beta-env.sh \
+              deploy-backend \
+              '${{ steps.beta.outputs.branch }}' \
+              '${{ steps.beta.outputs.image }}'"
+
+      # Это правильная новая команда вместо старой create.
+      # Она создаст/обновит папку и Nginx-конфиг.
+      - name: Create nginx site
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          SSH_TARGET="${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+
+          ssh "${SSH_TARGET}" \
+            "/opt/pets/scripts/beta-env.sh \
+              site \
+              '${{ steps.beta.outputs.branch }}'"
 
       - name: Upload frontend
+        shell: bash
         run: |
-          rsync -az --delete \
+          set -Eeuo pipefail
+
+          rsync \
+            -az \
+            --delete \
             pets-front/dist/ \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/var/www/features/${BRANCH}/
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/var/www/features/${{ steps.beta.outputs.branch }}/"
+
+      - name: Verify beta frontend
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          URL="${{ steps.beta.outputs.url }}"
+
+          echo "Checking frontend: ${URL}"
+
+          curl \
+            --fail \
+            --show-error \
+            --silent \
+            --retry 10 \
+            --retry-delay 2 \
+            --retry-connrefused \
+            "${URL}/" \
+            > /dev/null
+
+      - name: Verify beta API
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          API_URL="${{ steps.beta.outputs.url }}/api/dogs"
+
+          echo "Checking API: ${API_URL}"
+
+          curl \
+            --fail \
+            --show-error \
+            --silent \
+            --retry 10 \
+            --retry-delay 2 \
+            --retry-connrefused \
+            "${API_URL}"
+
+          echo
+
+      - name: Add deployment summary
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "## ✅ Frontend beta deployed"
+            echo
+            echo "| Параметр | Значение |"
+            echo "|---|---|"
+            echo "| Ветка | \`${GITHUB_REF_NAME}\` |"
+            echo "| Slug | \`${{ steps.beta.outputs.branch }}\` |"
+            echo "| Backend существовал | \`${{ steps.backend.outputs.exists }}\` |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo
+            echo "### 🌐 [Открыть beta-окружение](${{ steps.beta.outputs.url }})"
+            echo
+            echo "### 🔌 [Открыть API](${{ steps.beta.outputs.url }}/api/dogs)"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   cleanup:
     if: |
       github.event_name == 'delete' ||
-      github.event_name == 'pull_request' && github.event.pull_request.merged == true   
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.merged == true
+      )
+
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Prepare branch
+      - name: Prepare deleted branch
+        id: beta
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           if [ "${{ github.event_name }}" = "delete" ]; then
-            BRANCH="${{ github.event.ref }}"
+            RAW_BRANCH="${{ github.event.ref }}"
           else
-            BRANCH="${{ github.event.pull_request.head.ref }}"
+            RAW_BRANCH="${{ github.event.pull_request.head.ref }}"
           fi
-          
-          BRANCH=$(echo "$BRANCH" | tr '/' '-' | tr '_' '-')
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
+          BRANCH="$(
+            printf '%s' "${RAW_BRANCH}" |
+            tr '[:upper:]' '[:lower:]' |
+            sed -E \
+              's#[/_]+#-#g;
+               s#[^a-z0-9-]+#-#g;
+               s#-+#-#g;
+               s#^-+##;
+               s#-+$##'
+          )"
+
+          if [ -z "${BRANCH}" ]; then
+            echo "Cannot create slug from branch: ${RAW_BRANCH}" >&2
+            exit 1
+          fi
+
+          echo "branch=${BRANCH}" >> "${GITHUB_OUTPUT}"
+
+          echo "Raw branch: ${RAW_BRANCH}"
+          echo "Branch slug: ${BRANCH}"
 
       - name: Configure SSH
+        shell: bash
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          set -Eeuo pipefail
 
-      - name: Delete beta
+          mkdir -p ~/.ssh
+
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" \
+            > ~/.ssh/id_ed25519
+
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" \
+            >> ~/.ssh/known_hosts
+
+      - name: Delete beta environment
+        shell: bash
         run: |
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "/opt/pets/scripts/beta-env.sh delete ${BRANCH}"
+          set -Eeuo pipefail
+
+          SSH_TARGET="${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+
+          ssh "${SSH_TARGET}" \
+            "/opt/pets/scripts/beta-env.sh \
+              delete \
+              '${{ steps.beta.outputs.branch }}'"
+
+      - name: Add cleanup summary
+        shell: bash
+        run: |
+          {
+            echo "## 🧹 Beta environment deleted"
+            echo
+            echo "Branch slug: \`${{ steps.beta.outputs.branch }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

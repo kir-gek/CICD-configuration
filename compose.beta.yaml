@@ -1,14 +1,10 @@
 services:
   backend:
-    build:
-      context: ./pets-back
-      dockerfile: Dockerfile
-
-    container_name: pets-backend
+    image: ${BACKEND_IMAGE}
     restart: unless-stopped
 
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 5000
 
       DB_HOST: postgres
@@ -19,15 +15,17 @@ services:
 
       SECRET_KEY: ${SECRET_KEY}
 
+      # Каждая новая beta-база получает тестовые данные.
       RUN_SEEDS: "true"
 
     depends_on:
       postgres:
         condition: service_healthy
 
+    # Docker назначит свободный порт хоста автоматически.
     ports:
-      - "127.0.0.1:5000:5000"
-    
+      - "5000"
+
     healthcheck:
       test:
         [
@@ -43,7 +41,6 @@ services:
 
   postgres:
     image: postgres:17-alpine
-    container_name: pets-postgres
     restart: unless-stopped
 
     environment:
@@ -67,3 +64,10 @@ services:
 
 volumes:
   postgres_data:
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      # Случайный backend-порт будет привязан только к localhost.
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"

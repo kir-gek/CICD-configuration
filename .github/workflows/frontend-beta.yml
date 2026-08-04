@@ -20,7 +20,7 @@ permissions:
   packages: write
 
 env:
-  NODE_VERSION: "23"
+  NODE_VERSION: "24"
   FRONT_DIR: pets-front
   REGISTRY: ghcr.io
   SERVER_IP: 138.16.226.144
@@ -94,7 +94,7 @@ jobs:
           echo "Beta URL: ${BETA_URL}"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm

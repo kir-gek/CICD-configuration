@@ -23,7 +23,7 @@ env:
   NODE_VERSION: "24"
   FRONT_DIR: pets-front
   REGISTRY: ghcr.io
-  SERVER_IP: 138.16.226.144
+  SERVER_IP: 138.16.226.144  #!!!!!!!!!!!!!!!!!!!!!!!!!!!!МЕНЯТЬ
 
 jobs:
   deploy:
@@ -46,6 +46,7 @@ jobs:
       - name: Prepare beta variables
         id: beta
         shell: bash
+        # ниже в run поменять BETA_URL
         run: |
           set -Eeuo pipefail
 
@@ -82,7 +83,7 @@ jobs:
 
           IMAGE="${IMAGE_REPOSITORY}:beta-${BRANCH}"
           SHA_IMAGE="${IMAGE_REPOSITORY}:beta-${BRANCH}-${SHORT_SHA}"
-          BETA_URL="http://${BRANCH}.${SERVER_IP}.sslip.io"
+          BETA_URL="http://${BRANCH}.${SERVER_IP}.sslip.io"   
 
           echo "branch=${BRANCH}" >> "${GITHUB_OUTPUT}"
           echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
@@ -211,6 +212,7 @@ jobs:
 
       - name: Upload frontend
         shell: bash
+        #features поменять на beta
         run: |
           set -Eeuo pipefail
 
@@ -241,6 +243,7 @@ jobs:
 
       - name: Verify beta API
         shell: bash
+        # API_URL поменять (гет запрос на нее чекает)
         run: |
           set -Eeuo pipefail
 
@@ -262,6 +265,7 @@ jobs:
       - name: Add deployment summary
         if: success()
         shell: bash
+        # урлы посмотреть
         run: |
           {
             echo "## ✅ Frontend beta deployed"

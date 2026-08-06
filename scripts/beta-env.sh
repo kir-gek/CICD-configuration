@@ -6,16 +6,19 @@ ACTION="${1:-}"
 BRANCH="${2:-}"
 IMAGE="${3:-}"
 
-SERVER_IP="138.16.226.144"
+SERVER_IP="138.16.226.144" #ТУТ ДОмен
 
 BASE_DIR="/opt/pets"
 COMPOSE_FILE="${BASE_DIR}/compose.beta.yaml"
-COMMON_ENV="${BASE_DIR}/beta.env"
+COMMON_ENV="${BASE_DIR}/beta.env"  #ТУТ надо добавить scp флоу
 
-WWW_BASE="/var/www/features"
+WWW_BASE="/var/www/features"   #/var/www/betas
 
 NGINX_AVAILABLE="/etc/nginx/sites-available"
 NGINX_ENABLED="/etc/nginx/sites-enabled"
+
+PROD_POSTGRES_CONTAINER="pets-postgres"  #pets-postgres-test
+
 
 die() {
     echo "ERROR: $*" >&2
@@ -45,7 +48,7 @@ check_server_files() {
 validate_branch
 
 PROJECT="beta-${BRANCH}"
-DOMAIN="${BRANCH}.${SERVER_IP}.sslip.io"
+DOMAIN="${BRANCH}.${SERVER_IP}.sslip.io"  #sslip.io убрать
 
 WWW_ROOT="${WWW_BASE}/${BRANCH}"
 
@@ -189,7 +192,129 @@ create_site() {
         echo "WARNING: backend for ${BRANCH} does not exist yet"
     fi
 
-    echo "BETA_URL=http://${DOMAIN}"
+    echo "BETA_URL=http://${DOMAIN}"  #https
+}
+
+get_service_container() {
+    local service="${1:-}"
+
+    docker ps -a \
+        --filter "label=com.docker.compose.project=${PROJECT}" \
+        --filter "label=com.docker.compose.service=${service}" \
+        --format '{{.ID}}' |
+        head -n 1
+}
+
+beta_database_exists() {
+    local postgres_container
+
+    postgres_container="$(get_service_container postgres)"
+
+    [[ -n "${postgres_container}" ]]
+}
+
+wait_for_container_health() {
+    local container_id="${1:-}"
+    local service_name="${2:-container}"
+    local attempt
+    local status
+
+    [[ -n "${container_id}" ]] \
+        || die "Container ID is required for ${service_name}"
+
+    for attempt in $(seq 1 60); do
+        status="$(
+            docker inspect \
+                --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+                "${container_id}"
+        )"
+
+        case "${status}" in
+            healthy|running)
+                echo "${service_name} is ready"
+                return 0
+                ;;
+
+            unhealthy|exited|dead)
+                docker logs --tail=100 "${container_id}" || true
+                die "${service_name} entered state: ${status}"
+                ;;
+
+            *)
+                echo "Waiting for ${service_name}: ${status}"
+                sleep 2
+                ;;
+        esac
+    done
+
+    docker logs --tail=100 "${container_id}" || true
+    die "Timeout waiting for ${service_name}"
+}
+
+clone_production_database() {
+    local beta_postgres_container
+    local dump_file=""
+
+    cleanup_dump() {
+        if [[ -n "${dump_file}" && -f "${dump_file}" ]]; then
+            rm -f "${dump_file}"
+        fi
+    }
+
+    trap cleanup_dump RETURN
+
+    docker inspect "${PROD_POSTGRES_CONTAINER}" >/dev/null 2>&1 \
+        || die "Production PostgreSQL container not found: ${PROD_POSTGRES_CONTAINER}"
+
+    beta_postgres_container="$(get_service_container postgres)"
+
+    [[ -n "${beta_postgres_container}" ]] \
+        || die "Beta PostgreSQL container not found for ${BRANCH}"
+
+    wait_for_container_health \
+        "${beta_postgres_container}" \
+        "beta PostgreSQL"
+
+    dump_file="$(mktemp --suffix=.dump)"
+    chmod 600 "${dump_file}"
+
+    echo "Creating production database dump..."
+
+    docker exec "${PROD_POSTGRES_CONTAINER}" \
+        sh -ceu '
+            pg_dump \
+                --username="$POSTGRES_USER" \
+                --dbname="$POSTGRES_DB" \
+                --format=custom \
+                --no-owner \
+                --no-acl
+        ' > "${dump_file}"
+
+    [[ -s "${dump_file}" ]] \
+        || die "Production database dump is empty"
+
+    echo "Copying dump into beta PostgreSQL..."
+
+    docker cp \
+        "${dump_file}" \
+        "${beta_postgres_container}:/tmp/production.dump"
+
+    echo "Restoring production database into beta..."
+
+    docker exec "${beta_postgres_container}" \
+        sh -ceu '
+            pg_restore \
+                --username="$POSTGRES_USER" \
+                --dbname="$POSTGRES_DB" \
+                --no-owner \
+                --no-acl \
+                --exit-on-error \
+                /tmp/production.dump
+
+            rm -f /tmp/production.dump
+        '
+
+    echo "Production database copied successfully"
 }
 
 deploy_backend() {
@@ -205,8 +330,34 @@ deploy_backend() {
     echo "Project: ${PROJECT}"
     echo "Image:   ${IMAGE}"
 
+    local is_new_environment="false"
+
+    if ! beta_database_exists; then
+        is_new_environment="true"
+        echo "New beta database detected"
+    else
+        echo "Existing beta database detected"
+    fi
+
     compose pull backend
 
+    if [[ "${is_new_environment}" == "true" ]]; then
+        echo "Starting beta PostgreSQL..."
+
+        # Запускаем только PostgreSQL.
+        # Backend пока нельзя запускать: сначала нужно восстановить дамп.
+        compose up \
+            -d \
+            --wait \
+            --wait-timeout 120 \
+            postgres
+
+        clone_production_database
+    fi
+
+    echo "Starting beta backend..."
+
+    # При запуске backend Compose также проверит зависимость postgres.
     compose up \
         -d \
         --wait \
@@ -220,9 +371,16 @@ deploy_backend() {
 
     echo
     echo "Beta backend deployed successfully"
+    echo "DATABASE_SOURCE=$(
+        if [[ "${is_new_environment}" == "true" ]]; then
+            echo "production-copy"
+        else
+            echo "existing-beta-volume"
+        fi
+    )"
     echo "BACKEND_PORT=${backend_port}"
-    echo "BETA_URL=http://${DOMAIN}"
-    echo "API_URL=http://${DOMAIN}/api"
+    echo "BETA_URL=http://${DOMAIN}"   #https
+    echo "API_URL=http://${DOMAIN}/api" #https
 }
 
 show_status() {
@@ -230,7 +388,7 @@ show_status() {
 
     echo "Branch:  ${BRANCH}"
     echo "Project: ${PROJECT}"
-    echo "URL:     http://${DOMAIN}"
+    echo "URL:     http://${DOMAIN}"  #https
     echo
 
     compose ps
@@ -241,7 +399,7 @@ show_status() {
 
         echo
         echo "BACKEND_PORT=${backend_port}"
-        echo "API_URL=http://${DOMAIN}/api"
+        echo "API_URL=http://${DOMAIN}/api"  #https
     else
         echo
         echo "Backend is not deployed"

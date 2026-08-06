@@ -109,7 +109,7 @@ jobs:
         env:
           # Frontend будет обращаться к API текущей beta:
           # http://branch.sslip.io/api
-          VITE_API_URL: /api
+          VITE_API_URL: /
         run: npm run build
 
       - name: Configure SSH

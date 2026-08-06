@@ -16,7 +16,7 @@ const corsOptions = {
   credentials: true, //access-control-allow-credentials:true
   optionSuccessStatus: 200,
 };
-
+app.get('api/test', (req, res)=> {res.send('Vse kruto')})
 app.use(cors(corsOptions));
 app.use(express.static(path.resolve(__dirname, 'static')))
 

@@ -19,8 +19,6 @@ services:
 
       SECRET_KEY: ${SECRET_KEY}
 
-      RUN_SEEDS: "true"
-
     depends_on:
       postgres:
         condition: service_healthy

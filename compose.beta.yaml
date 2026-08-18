@@ -15,8 +15,6 @@ services:
 
       SECRET_KEY: ${SECRET_KEY}
 
-      # Каждая новая beta-база получает тестовые данные.
-      RUN_SEEDS: "true"
 
     depends_on:
       postgres:

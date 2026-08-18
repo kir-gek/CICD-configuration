@@ -12,10 +12,6 @@ const createConfig = () => ({
   migrationStorage: "sequelize",
   migrationStorageTableName: "SequelizeMeta",
 
-  // Выполненные seeds записываются в SequelizeData.
-  // Благодаря этому seed не запускается повторно при каждом рестарте.
-  seederStorage: "sequelize",
-  seederStorageTableName: "SequelizeData",
 
   logging: false,
 });

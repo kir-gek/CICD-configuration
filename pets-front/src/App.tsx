@@ -8,6 +8,7 @@ function App() {
         <span className="font-mono text-xs font-bold uppercase tracking-wider text-indigo-400">
            Список крутых породпп!!!!!!:
         </span>
+        <p>Делаем тест для проверки копирования БД</p>
       </div>
       <Dogs />
     </div>

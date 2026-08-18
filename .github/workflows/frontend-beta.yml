@@ -127,6 +127,27 @@ jobs:
           ssh-keyscan -H "${{ secrets.SERVER_HOST }}" \
             >> ~/.ssh/known_hosts
 
+      - name: Upload beta deployment files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          SSH_TARGET="${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}"
+
+          ssh "${SSH_TARGET}" \
+            "mkdir -p /opt/pets/scripts"
+
+          scp \
+            compose.beta.yaml \
+            "${SSH_TARGET}:/opt/pets/compose.beta.yaml"
+
+          scp \
+            scripts/beta-env.sh \
+            "${SSH_TARGET}:/opt/pets/scripts/beta-env.sh"
+
+          ssh "${SSH_TARGET}" \
+            "chmod +x /opt/pets/scripts/beta-env.sh"
+            
       # Backend может уже существовать, если первым
       # отработал backend-beta.yml.
       - name: Check beta backend

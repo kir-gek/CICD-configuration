@@ -12,6 +12,12 @@ BASE_DIR="/opt/pets"
 COMPOSE_FILE="${BASE_DIR}/compose.beta.yaml"
 COMMON_ENV="${BASE_DIR}/beta.env"
 
+PROD_POSTGRES_CONTAINER="pets-postgres"
+
+# Маркер хранится внутри beta PostgreSQL volume.
+# Если он существует — production уже был скопирован в эту beta.
+BETA_CLONE_MARKER="/var/lib/postgresql/data/.cloned-from-production"
+
 WWW_BASE="/var/www/features"
 
 NGINX_AVAILABLE="/etc/nginx/sites-available"
@@ -192,6 +198,106 @@ create_site() {
     echo "BETA_URL=http://${DOMAIN}"
 }
 
+get_postgres_container() {
+    compose ps -q postgres 2>/dev/null | tail -n 1
+}
+
+beta_clone_complete() {
+    local postgres_container
+
+    postgres_container="$(get_postgres_container)"
+
+    [[ -n "${postgres_container}" ]] || return 1
+
+    docker exec \
+        "${postgres_container}" \
+        test -f "${BETA_CLONE_MARKER}"
+}
+
+clone_production_database() {
+    local beta_postgres_container
+    local dump_file
+
+    echo "Preparing production database clone..."
+
+    # Production PostgreSQL должен существовать и работать.
+    docker inspect "${PROD_POSTGRES_CONTAINER}" >/dev/null 2>&1 \
+        || die "Production PostgreSQL container not found: ${PROD_POSTGRES_CONTAINER}"
+
+    [[ "$(
+        docker inspect \
+            -f '{{.State.Running}}' \
+            "${PROD_POSTGRES_CONTAINER}"
+    )" == "true" ]] \
+        || die "Production PostgreSQL is not running"
+
+    beta_postgres_container="$(get_postgres_container)"
+
+    [[ -n "${beta_postgres_container}" ]] \
+        || die "Beta PostgreSQL container not found"
+
+    dump_file="$(mktemp)"
+    chmod 600 "${dump_file}"
+
+    echo "Creating dump from production..."
+
+    if ! docker exec "${PROD_POSTGRES_CONTAINER}" \
+        sh -ceu '
+            pg_dump \
+                --username="$POSTGRES_USER" \
+                --dbname="$POSTGRES_DB" \
+                --format=custom \
+                --no-owner \
+                --no-acl
+        ' > "${dump_file}"
+    then
+        rm -f "${dump_file}"
+        die "Failed to dump production database"
+    fi
+
+    [[ -s "${dump_file}" ]] || {
+        rm -f "${dump_file}"
+        die "Production database dump is empty"
+    }
+
+    echo "Copying production dump into beta PostgreSQL..."
+
+    if ! docker cp \
+        "${dump_file}" \
+        "${beta_postgres_container}:/tmp/production.dump"
+    then
+        rm -f "${dump_file}"
+        die "Failed to copy production dump into beta PostgreSQL"
+    fi
+
+    rm -f "${dump_file}"
+
+    echo "Restoring production database into beta..."
+
+    if ! docker exec "${beta_postgres_container}" \
+        sh -ceu '
+            trap "rm -f /tmp/production.dump" EXIT
+
+            pg_restore \
+                --username="$POSTGRES_USER" \
+                --dbname="$POSTGRES_DB" \
+                --clean \
+                --if-exists \
+                --no-owner \
+                --no-acl \
+                --exit-on-error \
+                --single-transaction \
+                /tmp/production.dump
+
+            touch /var/lib/postgresql/data/.cloned-from-production
+        '
+    then
+        die "Failed to restore production database into beta"
+    fi
+
+    echo "Production database copied successfully"
+}
+
 deploy_backend() {
     [[ -n "${IMAGE}" ]] \
         || die "Backend image is required"
@@ -207,6 +313,40 @@ deploy_backend() {
 
     compose pull backend
 
+    # Сначала запускаем ТОЛЬКО PostgreSQL.
+    # Backend пока запускать нельзя:
+    # сначала нужно скопировать production DB.
+    echo "Starting beta PostgreSQL..."
+
+    compose up \
+        -d \
+        --wait \
+        --wait-timeout 120 \
+        postgres
+
+    local database_source
+
+    if beta_clone_complete; then
+        echo "Existing beta database detected"
+        echo "Production database will NOT be copied again."
+
+        database_source="existing-beta-volume"
+    else
+        echo "New beta database detected"
+        echo "Production database will be copied."
+
+        clone_production_database
+
+        database_source="production-copy"
+    fi
+
+    # Теперь production DB уже скопирована.
+    # Запускаем backend.
+    #
+    # docker-entrypoint.sh после этого применит migrations
+    # текущей feature-ветки.
+    echo "Starting beta backend..."
+
     compose up \
         -d \
         --wait \
@@ -220,6 +360,7 @@ deploy_backend() {
 
     echo
     echo "Beta backend deployed successfully"
+    echo "DATABASE_SOURCE=${database_source}"
     echo "BACKEND_PORT=${backend_port}"
     echo "BETA_URL=http://${DOMAIN}"
     echo "API_URL=http://${DOMAIN}/api"

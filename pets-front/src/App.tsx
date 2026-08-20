@@ -11,6 +11,9 @@ function App() {
         <span className="font-mono text-xs font-bold uppercase tracking-wider text-indigo-400">
            Тест 1(фронт онли начало ветки):
         </span>
+         <span className="font-mono text-xs font-bold uppercase tracking-wider text-indigo-400">
+           Тест 2(фронт онли продолжение ветки (сохранность данных)):
+        </span>
       </div>
       <Dogs />
     </div>

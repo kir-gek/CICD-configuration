@@ -2,6 +2,17 @@ const { DogBreed } = require("../models/models");
 const ApiError = require("../error/ApiError");
 
 class DogController {
+   async getTest(req, res, next) {
+    try {
+      const breedAll = await DogBreed.findAll({
+        order: [ ["id", "ASC"]],
+      });
+      return res.json(breedAll);
+    } catch (e) {
+      next(ApiError.badRequest(e.message));
+    }
+  }
+
   async getBreed(req, res, next) {
     try {
       const breedAll = await DogBreed.findAll({

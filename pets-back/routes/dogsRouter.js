@@ -6,5 +6,6 @@ router.post("/", DogController.postBreed);
 router.get("/", DogController.getBreed);
 router.put("/", DogController.updateBreed);
 router.delete("/:id", DogController.deleteBreed)
+router.get("/test", DogController.getTest)
 
 module.exports = router;

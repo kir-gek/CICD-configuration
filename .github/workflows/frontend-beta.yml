@@ -254,7 +254,7 @@ jobs:
             --fail \
             --show-error \
             --silent \
-            --retry 10 \
+            --retry 3 \
             --retry-delay 2 \
             --retry-connrefused \
             "${URL}/" \

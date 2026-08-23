@@ -3,7 +3,7 @@
 module.exports = {
   async up(queryInterface, Sequelize) {
     await queryInterface.addColumn(
-      "table_that_does_not_exist",
+      "dog_breeds",
       "broken_test",
       {
         type: Sequelize.TEXT,
@@ -14,7 +14,7 @@ module.exports = {
 
   async down(queryInterface) {
     await queryInterface.removeColumn(
-      "table_that_does_not_exist",
+      "dog_breeds",
       "broken_test"
     );
   },

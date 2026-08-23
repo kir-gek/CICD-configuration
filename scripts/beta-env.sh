@@ -6,19 +6,19 @@ ACTION="${1:-}"
 BRANCH="${2:-}"
 IMAGE="${3:-}"
 
-SERVER_IP="138.16.226.144"
+SERVER_IP="138.16.226.144" #ТУТ ДОмен
 
 BASE_DIR="/opt/pets"
 COMPOSE_FILE="${BASE_DIR}/compose.beta.yaml"
-COMMON_ENV="${BASE_DIR}/beta.env"
+COMMON_ENV="${BASE_DIR}/beta.env"  #ТУТ надо добавить scp флоу
 
-PROD_POSTGRES_CONTAINER="pets-postgres"
+PROD_POSTGRES_CONTAINER="pets-postgres" #pets-postgres-test
 
 # Маркер хранится внутри beta PostgreSQL volume.
 # Если он существует — production уже был скопирован в эту beta.
 BETA_CLONE_MARKER="/var/lib/postgresql/data/.cloned-from-production"
 
-WWW_BASE="/var/www/features"
+WWW_BASE="/var/www/features"  #/var/www/betas
 
 NGINX_AVAILABLE="/etc/nginx/sites-available"
 NGINX_ENABLED="/etc/nginx/sites-enabled"
@@ -51,7 +51,7 @@ check_server_files() {
 validate_branch
 
 PROJECT="beta-${BRANCH}"
-DOMAIN="${BRANCH}.${SERVER_IP}.sslip.io"
+DOMAIN="${BRANCH}.${SERVER_IP}.sslip.io"  #sslip.io убрать
 
 WWW_ROOT="${WWW_BASE}/${BRANCH}"
 
@@ -362,8 +362,8 @@ deploy_backend() {
     echo "Beta backend deployed successfully"
     echo "DATABASE_SOURCE=${database_source}"
     echo "BACKEND_PORT=${backend_port}"
-    echo "BETA_URL=http://${DOMAIN}"
-    echo "API_URL=http://${DOMAIN}/api"
+    echo "BETA_URL=http://${DOMAIN}"    #https
+    echo "API_URL=http://${DOMAIN}/api"   #https
 }
 
 show_status() {
@@ -371,7 +371,7 @@ show_status() {
 
     echo "Branch:  ${BRANCH}"
     echo "Project: ${PROJECT}"
-    echo "URL:     http://${DOMAIN}"
+    echo "URL:     http://${DOMAIN}"   #https
     echo
 
     compose ps
@@ -382,7 +382,7 @@ show_status() {
 
         echo
         echo "BACKEND_PORT=${backend_port}"
-        echo "API_URL=http://${DOMAIN}/api"
+        echo "API_URL=http://${DOMAIN}/api"   #https
     else
         echo
         echo "Backend is not deployed"

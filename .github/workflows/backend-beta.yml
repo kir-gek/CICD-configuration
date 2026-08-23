@@ -20,8 +20,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REGISTRY: ghcr.io
-  SERVER_IP: 138.16.226.144
+  REGISTRY: ghcr.io    
+  SERVER_IP: 138.16.226.144  #менятиь
 
 jobs:
   build-and-deploy:
@@ -40,6 +40,7 @@ jobs:
       - name: Prepare beta variables
         id: beta
         shell: bash
+         # BETA_URL поменять ниже в run
         run: |
           set -Eeuo pipefail
 
@@ -141,6 +142,7 @@ jobs:
       # из той же ветки и того же commit.
       - name: Upload beta deployment files
         shell: bash
+         # из гитхаб секретов делаем beta.env (аналог .env для бэкенда) и по scp отправляем 
         run: |
           set -Eeuo pipefail
 
